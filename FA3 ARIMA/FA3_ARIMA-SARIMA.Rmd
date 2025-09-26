@@ -1,0 +1,546 @@
+---
+title: "ARIMA/SARIMA Models"
+author: "Baybayon, Darlyn Antoinette B."
+output: github_document
+header-includes:
+  - \usepackage{titling}
+  - \setlength{\droptitle}{-2cm}  
+geometry: top=2cm, bottom=2cm, left=2cm, right=2cm
+mainfont: "Georgia"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(readxl)
+  library(tidyverse)
+  library(ggplot2)
+  library(car)
+  library(forecast)
+  library(tseries)
+})
+```
+
+## Dataset 1
+
+```{r}
+df1 <- read_csv("~/FEU/5TH YR 1ST SEM/APM1215/FA3/data/dataset1.csv", show_col_types = FALSE)
+head(df1)
+```
+
+
+### Time Series Plot
+```{r}
+
+df1$month <- as.Date(paste0(df1$month, "-01"))
+df1_ts <- ts(df1$y, start = c(2018, 1), frequency = 12)
+plot(df1_ts, ylab = "y")
+abline(h = mean(df1_ts), col = "red", lwd = 2, lty = 2)
+plot(stl(df1_ts, "periodic"))
+adf.test(df1_ts)
+```
+
+The time series plot shows a weak trend with very gradual movement upwards and some fluctuations from 2018 through 2025. There is a consistent additive seasonality, with peaks and troughs occurring at regular intervals with constant amplitude. Peaks typically occur at around the 1st quarter of the year and the troughs at around the beginning of the 4th quarter per year. Some short runs are present, indicating some autocorrelation in the series. The variance appears to be constant through time. The Augmented Dickey-Fuller test confirms that the series is stationary and hence does not need differencing before applying ARIMA models. 
+
+### Sample ACF and PACF
+```{r}
+par(mfrow =c(1,2))
+acf(df1_ts, lag.max = 36, main = "ACF (0–36 Lags)")
+pacf(df1_ts, lag.max = 36, main = "PACF (0–36 Lags)")
+
+```
+
+The ACF does not cut off immediately and the plot show some seasonal spikes at lags 1, 6, 12, 18, ... while the PACF plot shows a cut off after lag 1, suggesting MA(1). 
+
+```{r}
+sdiff1 <- diff(df1_ts, lag = 12)
+par(mfrow=c(1,2))
+acf(sdiff1, lag.max = 36, main = "ACF (0–36 Lags)")
+pacf(sdiff1, lag.max = 36, main = "PACF (0–36 Lags)")
+```
+
+After seasonality differencing, the ACF and PACF now cuts off after lag 1 which points to the need for AR(1) and MA(1).
+
+
+### Model Fitting
+
+Based on the characteristics of the series, the following SARIMA models are proposed:
+
+**SARIMA(1, 0, 1)(0, 1, 1)[12]**
+This includes both AR(1) and MA(1) terms to capture the short-term correlations, seasonal differencing and seasonal SMA(1) to model the yearly seasonality. Since the series is already stationary but has strong seasonality, only seasonal differencing is applied.
+
+
+**SARIMA(1, 0, 0)(0, 1, 1)[12]**
+This is a simpler model only including AR(1) for the non-seasonal part. This tests whether the MA(1) component is necessary, assuming that past shocks do not significantly affect current value. Similar seasonal terms will be used from the first model, seasonal differencing is also applied.
+
+```{r}
+df1.model1 <- Arima(df1_ts, order = c(1, 0, 1), seasonal = c(0, 1, 1))
+df1.model2 <- Arima(df1_ts, order = c(1, 0, 0), seasonal = c(0, 1, 1))
+```
+
+
+### Model Summary
+**SARIMA(1, 0, 1)(0, 1, 1)[12]**
+```{r}
+summary(df1.model1)
+```
+
+The AR(1) coefficient is moderately negative (-0.56), suggesting a tendency for the series to oscillate around its mean, where a high value in one period tends to be followed by a somewhat lower value in the next. The MA(1) coefficient is small and statistically insignificant, implying that the short-term noise have little consistent effect on subsequent observations. The strong negative seasonal MA(1) (-0.845) reflects the series’ consistent seasonal pattern, effectively capturing the seasonal autocorrelation. Despite including the MA(1) term, the model’s fit does not substantially improve over the simpler alternative, and the relatively large standard error of the MA(1) coefficient raises questions about its necessity. Overall, while the model fits the data well, the non-seasonal MA(1) may not be necessary.
+
+**SARIMA(1, 0, 0)(0, 1, 1)[12]**
+```{r}
+summary(df1.model2)
+```
+The AR(1) coefficient (-0.45) still indicates a moderate negative autocorrelation in the short term.. The seasonal MA(1) coefficient remains strongly negative (-0.83), effectively modeling the annual seasonal shocks. Despite the reduced terms, this model achieves a slightly better AIC and BIC, indicating better parsimony compared to the first model. The lack of a non-seasonal MA(1) term does not degrade the model’s performance, indicating that the short-term noise component is minimal or sufficiently captured by the AR(1) term alone. This model’s parsimony and comparable predictive accuracy with the first model make it a preferable choice.
+
+
+### Residual Diagnostics
+   
+**SARIMA(1, 0, 1)(0, 1, 1)[12]**
+```{r}
+checkresiduals(df1.model1)
+```
+
+Residuals are randomly scattered around 0, indicating good fit of the model. The Ljung-Box Test resulted in p >0.05,  hence we fail to reject the null hypothesis of no autocorrelation. The residuals are independent and identically distributed. The ACF plot shows one spike at lag 12, which may indicate some leftover seasonal patterns even after differencing. The residuals are approximately normally distributed as shown in the histogram.
+
+**SARIMA(1, 0, 0)(0, 1, 1)[12]**
+```{r}
+checkresiduals(df1.model2)
+```
+Residuals are randomly scattered around 0, indicating good fit of the model. The Ljung-Box Test resulted in p >0.05,  hence we fail to reject the null hypothesis of no autocorrelation. The residuals are independent and identically distributed. The ACF plot also shows one spike at lag 12, which may indicate some leftover seasonal patterns even after differencing. The residuals are approximately normally distributed as shown in the histogram.
+
+### Forecast
+
+**SARIMA(1, 0, 1)(0, 1, 1)[12]**
+```{r}
+df1.fc1 <- forecast(df1.model1, h=12, level = 95)
+autoplot(df1.fc1, main = "12-Month Forecast using SARIMA", fcol = "red")
+print(df1.fc1)
+```
+
+```{r}
+data.frame(Avg = mean(df1.fc1$mean),LB = mean(df1.fc1$lower),UB = mean(df1.fc1$upper))
+```
+
+The forecast for the next 12 months is as shown above. The plot shows the persistence of the seasonality, even 12 months later. The model predicts an average y value of 502.01, thus continuing the slight upward trend, with a 95% confidence interval of [490.7551, 513.264]. Thus, we are 95% sure that in the next 12 months, the average y value will fall within this interval.
+
+**SARIMA(1, 0, 0)(0, 1, 1)[12]**
+```{r}
+df1.fc2 <- forecast(df1.model2, h=12, level = 95)
+autoplot(df1.fc2, main = "12-Month Forecast using SARIMA", fcol = "red")
+print(df1.fc2)
+```
+
+```{r}
+data.frame(Avg = mean(df1.fc2$mean),LB = mean(df1.fc2$lower),UB = mean(df1.fc2$upper))
+```
+
+```{r}
+mean(df1_ts)
+```
+
+The forecast for the next 12 months is as shown above. The plot shows the persistence of the seasonality, even 12 months later. The model predicts an average y value of 502.05, continuing on a slow upward trend, with a 95% confidence interval of [490.8216, 513.2825]. Thus, we are 95% sure that in the next 12 months, the average y value will fall within this interval.
+
+### Backtest
+
+Split the dataset, the last 20% will be used for validation.
+```{r}
+set.seed(123)
+n <- length(df1_ts)
+n_train <- floor(0.8 * n)
+n_test <- n - n_train
+
+df1_train <- window(df1_ts, end = c(2018 + (n_train - 1)/12))
+df1_test <- window(df1_ts, start = c(2018 + (n_train)/12))
+```
+
+Fit models on training set
+```{r}
+df1.model1.test <- Arima(df1_train, order = c(1, 0, 1), seasonal = c(0, 1, 1))
+df1.model2.test <- Arima(df1_train, order = c(1, 0, 0), seasonal = c(0, 1, 1))
+```
+
+Forecast
+```{r}
+df1.fc1.test <- forecast(df1.model1.test, h= n_test)
+df1.fc2.test <- forecast(df1.model2.test, h= n_test)
+```
+
+Compare forecast accuracy on test set
+
+**SARIMA(1, 0, 1)(0, 1, 1)[12]**
+```{r}
+accuracy(df1.fc1.test, df1_test)[, c("MAPE", "MAE", "RMSE")]
+```
+
+**MAPE = 1.09**: This indicates that, on average, the forecasts deviate from the actual values by 1.09% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 5.46**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 5.46 units, providing a straightforward measure of average prediction error in the original units.
+
+
+**RMSE = 6.57**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the difference between the forecast and actual value is about 6.57, which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+
+**SARIMA(1, 0, 0)(0, 1, 1)[12]**
+```{r}
+accuracy(df1.fc2.test, df1_test)[, c("MAPE", "MAE", "RMSE")]
+```
+
+**MAPE = 1.07**: This indicates that, on average, the forecasts deviate from the actual values by 1.07% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 5.36**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 5.36 units, providing a straightforward measure of average prediction error in the original units.
+
+**RMSE = 6.46**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the difference between the forecast and actual value is about 6.46, which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+Based on the accuracy measures on test data, the second SARIMA model outperforms the first.
+
+
+### Conclusion
+
+The SARIMA(1,0,0)(0,1,1)[12] model was selected as the final model for its simplicity and slightly better forecast accuracy. Compared to the more complex alternative with MA(1), this model achieved lower AIC/BIC and slightly better forecast accuracy (MAPE, MAE, and RMSE) in backtesting, without compromising model adequacy.
+
+The AR(1) term (-0.45) captures short-term negative autocorrelation, while the strong SMA(1) term (-0.83) models the annual repeating changes in the series. Diagnostic checks confirm the model is stationary, no autocorrelation, and that residuals behave like white noise, indicating a good fit. However, a limitation remains, as minor spike at lag 12 in the residual ACF was found. This suggests that some seasonal effects were not fully captured, leaving some structure in the residuals. Overall, the model reliably captures the series' dynamics and seasonality, and provides reliable short-term forecasts.
+
+
+
+
+## Dataset 2
+
+```{r}
+df2 <- read_csv("~/FEU/5TH YR 1ST SEM/APM1215/FA3/data/dataset2.csv", show_col_types = FALSE)
+head(df2)
+```
+
+
+### Time Series Plot
+```{r}
+df2_ts <- ts(df2$y)
+plot(df2_ts, ylab = "y")
+abline(h = mean(df2_ts), col = "red", lwd = 2, lty = 2)
+adf.test(df2_ts)
+```
+
+The time series plot shows a trend which grows initially but tends to oscillate eventually around 25. There are no strong recurring peaks and troughs in the series indicating no strong seasonality. The variance does not appear to grow or shrink drastically over time, and is likely constant. The Augmented Dickey-Fuller test confirms that the series is stationary (p<0.05), so no differencing will be needed. 
+
+
+### Sample ACF and PACF
+```{r}
+par(mfrow =c(1,2))
+acf(df2_ts, lag.max = 36, main = "ACF (0–36 Lags)")
+pacf(df2_ts, lag.max = 36, main = "PACF (0–36 Lags)")
+
+```
+
+The ACF does not cut off immediately and we see gradual decay while the PACF plot shows a cut off after lag 2. These point to the presence of AR component and need of AR(2).
+
+
+### Model Fitting
+
+Based on the characteristics of the series, the following ARIMA models are proposed:
+
+**ARIMA(2, 0, 0)**
+
+This model includes two autoregressive (AR(2)) terms and no differencing or moving average terms since the ACF does not cut off. No differencing applied since series is already stationary.
+
+**ARIMA(2, 0, 1)**
+
+This model includes two autoregressive terms for lag 1 and 2 (AR(2)) and one moving average term MA(1) to capture short-term dependencies and shock effects in a non-seasonal time series. No differencing applied since series is already stationary.
+
+```{r}
+df2.model1 <- Arima(df2_ts, order = c(2, 0, 0))
+df2.model2 <- Arima(df2_ts, order = c(2, 0, 1))
+```
+
+
+### Model Summary
+**ARIMA(2, 0, 0)**
+```{r}
+summary(df2.model1)
+```
+
+The AR(1) coefficient is positive (1.24), while the AR(2) coefficient is negative (-0.26). These values indicate that the series tend to continue towards the same direction short-term but may reverse over the next step (due to AR(2)). This behavior is as shown in the oscillations in the time series plot. The standard errors of both AR coefficients are small, indicating their statistical significance.
+
+
+**ARIMA(2, 0, 1)**
+```{r}
+summary(df2.model2)
+```
+The AR(1) coefficient is positive (0.98), while the AR(2) coefficient is also positive (0.001) with small standard errors. These indicate that the values are heavily influenced by the previous time steps. However, the AR(2) term is very small and likely does have a meaningful impact. The MA(1) coefficient is also positive (0.28) with a small standard error, indicating short-term shocks have moderate significant effects on the current value. This model has slightly higher AIC value than the other.
+
+### Residual Diagnostics
+   
+**ARIMA(2, 0, 0)**
+```{r}
+checkresiduals(df2.model1)
+```
+
+Residuals are randomly scattered around 0, indicating good fit of the model. The Ljung-Box Test resulted in p >0.05,  hence we fail to reject the null hypothesis of no autocorrelation. Therefore, residuals are independent and identically distributed. The ACF plot supports this as well. The residuals are approximately normally distributed as shown in the histogram.
+
+**ARIMA(2, 0, 1)**
+```{r}
+checkresiduals(df2.model2)
+```
+
+Likewise, residuals are randomly scattered around 0, indicating good fit of the model. The Ljung-Box Test resulted in p >0.05,  hence we fail to reject the null hypothesis of no autocorrelation. Therefore, residuals are independent and identically distributed. The ACF plot supports this as well. The residuals are approximately normally distributed as shown in the histogram.
+
+### Forecast
+
+**ARIMA(2, 0, 0)**
+```{r}
+df2.fc1 <- forecast(df2.model1, h=12, level = 95)
+autoplot(df2.fc1, main = "12-Point Forecast using ARIMA", fcol = "red")
+print(df2.fc1)
+```
+
+```{r}
+data.frame(Avg = mean(df2.fc1$mean),LB = mean(df2.fc1$lower),UB = mean(df2.fc1$upper))
+```
+
+The forecast for the next 12 points is as shown above. Unlike the historical data, the forecasts have small fluctuations with a relatively wide prediction interval. The model predicts an average y value of 25.92, with a 95% confidence interval of [20.5103, 31.33303]. Thus, we are 95% sure that for the next 12 months, the average y value will fall within this interval.
+
+**ARIMA(2, 0, 1)**
+```{r}
+df2.fc2 <- forecast(df2.model2, h=12, level = 95)
+autoplot(df2.fc2, main = "12-Point Forecast using SARIMA", fcol = "red")
+print(df2.fc2)
+```
+
+```{r}
+data.frame(Avg = mean(df2.fc2$mean),LB = mean(df2.fc2$lower),UB = mean(df2.fc2$upper))
+```
+
+The forecast for the next 12 points is as shown above. Unlike the historical data, the forecasts have small fluctuations with a relatively wide prediction interval. The model predicts an average y value of 25.91, with a 95% confidence interval of [20.624, 31.193]. Thus, we are 95% sure that for the next 12 points, the average y value will fall within this interval.
+
+### Backtest
+
+Split the dataset, the last 20% will be used for validation.
+```{r}
+set.seed(123)
+n <- length(df2_ts)
+n_train <- floor(0.8 * n)
+n_test <- n - n_train
+df2_train <- window(df2_ts, end = c(n_train))
+df2_test <- window(df2_ts, start = c(n_train+1))
+```
+
+Fit models on training set
+```{r}
+df2.model1.test <- Arima(df2_train, order = c(2, 0, 0))
+df2.model2.test <- Arima(df2_train, order = c(2, 0, 1))
+```
+
+Forecast
+```{r}
+df2.fc1.test <- forecast(df2.model1.test, h= n_test)
+df2.fc2.test <- forecast(df2.model2.test, h= n_test)
+```
+
+Compare forecast accuracy on test set
+
+**ARIMA(2, 0, 0)**
+```{r}
+accuracy(df2.fc1.test, df2_test)[, c("MAPE", "MAE", "RMSE")]
+```
+
+**MAPE = 11.53**: This indicates that, on average, the forecasts deviate from the actual values by 11.53% demonstrating a high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 2.86**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 2.86 units, providing a straightforward measure of average prediction error in the original units.
+
+**RMSE = 3.37**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the difference between the forecast and actual value is about 3.37, which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+
+**ARIMA(2, 0, 1)**
+```{r}
+accuracy(df2.fc2.test, df2_test)[, c("MAPE", "MAE", "RMSE")]
+```
+**MAPE = 10.73**: This indicates that, on average, the forecasts deviate from the actual values by 10.73% demonstrating a high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 2.67**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 2.67 units, providing a straightforward measure of average prediction error in the original units.
+
+
+**RMSE = 3.18**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the difference between the forecast and actual value is about 3.18, which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+Based on these accuracy measures, the second model, ARIMA(2,0,1) outperforms the other.
+
+
+### Conclusion
+
+The ARIMA(2,0,1) model is selected as the final model, as it provided better forecast accuracy in backtesting compared to ARIMA(2,0,0), despite its slightly higher AIC.
+
+The AR(1) coefficient (0.98) indicates that the current value is strongly influenced by the immediately preceding value, while the AR(2) coefficient (0.00) is very small and contributes little, suggesting that most of the autoregressive behavior is explained by the AR(1) term. The MA(1) coefficient (0.28) reflects the effect of forecast errors from the previous step still moderately affect the current value.
+
+Residual diagnostics support the adequacy of the model as its residuals behave like white noise with no significant autocorrelation and approximately constant variance. Overall, this model does well in capturing short-term behavior, but is not able to capture long-term dynamics. While the forecast accuracy measures were good, the confidence intervals were relatively wide, leaving much room for uncertainty.
+
+
+
+## Dataset 3
+
+```{r}
+df3 <- read_csv("~/FEU/5TH YR 1ST SEM/APM1215/FA3/data/dataset4.csv", show_col_types = FALSE)
+head(df3)
+```
+
+
+### Time Series Plot
+```{r}
+df3_ts <- ts(df3$y)
+plot(df3_ts, ylab = "y")
+abline(h = mean(df3_ts), col = "red", lwd = 2, lty = 2)
+adf.test(df3_ts)
+```
+In this time series plot, a long-term upwards trend can be observed over time. There are no strong recurring peaks and troughs in the series indicating no strong seasonality. In some levels, the variance grow or shrink and thus is likely not constant. The Augmented Dickey-Fuller test confirms that the series is non-stationary (p>0.05).
+
+### Sample ACF and PACF
+```{r}
+par(mfrow =c(1,2))
+acf(df3_ts, lag.max = 36, main = "ACF (0–36 Lags)")
+pacf(df3_ts, lag.max = 36, main = "PACF (0–36 Lags)")
+
+```
+
+The ACF decays gradually and are significant until the 36th lag. Meanwhile, PACF has a sharp cut off after lag 1, pointing to the presence of an AR component.
+
+
+### Model Fitting
+
+Based on the characteristics of the series, the following ARIMA models are proposed:
+
+**ARIMA(1, 1, 1)**
+
+This model includes an autoregressive AR(1) term to address short-term dependence.The moving average term MA(1) will account for short-term effects of random shocks. Differencing will be applied to remove non-stationarity.
+
+**ARIMA(1, 1, 0)**
+
+This model simplifies the first, removing the MA term. This assumes that the past shocks do not significantly influence the current value.
+
+
+```{r}
+df3.model1 <- Arima(df3_ts, order = c(1, 1, 1))
+df3.model2 <- Arima(df3_ts, order = c(1, 1, 0))
+```
+
+
+### Model Summary
+**ARIMA(1, 1, 1)**
+```{r}
+summary(df3.model1)
+```
+
+The AR(1) coefficient is positive (0.63), while the MA(1) coefficient is negative (-0.42), both with low standard errors, indicating that they are statistically significant. The positive AR(1) suggests that the current value is moderately influenced by the previous value such that the next value is likely to continue towards the same direction as its precedent. Meanwhile, the negative MA(1) implies that past errors do have a short-term effect on the current value.
+
+
+**ARIMA(1, 1, 0)**
+```{r}
+summary(df3.model2)
+```
+
+The AR(1) coefficient is positive (0.2394) with a small standard error (0.0562), indicating it is statistically significant. This suggests that the differenced series exhibits weak but positive autocorrelation. Unlike the other, this model assumes that past errors do not have short-term effects on the present value. This model, however, has a higher AIC value, despite its simplicity. Thus, the first model, ARIMA(1,1,1) likely has better fit.
+
+
+### Residual Diagnostics
+   
+**ARIMA(1, 1, 1)**
+```{r}
+checkresiduals(df3.model1)
+```
+
+Residuals are randomly scattered around 0, indicating good fit of the model. The Ljung-Box Test resulted in p >0.05,  hence we fail to reject the null hypothesis of no autocorrelation. Therefore, residuals are independent and identically distributed. The ACF plot supports this as well. Additionally, the residuals are approximately normally distributed as shown in the histogram.
+
+**ARIMA(1, 1, 0)**
+```{r}
+checkresiduals(df3.model2)
+```
+
+For this model, the residuals are also randomly scattered around 0, indicating good fit of the model. The Ljung-Box Test resulted in p >0.05,  hence we fail to reject the null hypothesis of no autocorrelation. Therefore, residuals are independent and identically distributed. There is, however, a spike at lag 2 in the ACF plot, but may not be large enough to raise concern. Additionally, the residuals are approximately normally distributed as shown in the histogram.
+
+### Forecast
+
+**ARIMA(1, 1, 1)**
+```{r}
+df3.fc1 <- forecast(df3.model1, h=12, level = 95)
+autoplot(df3.fc1, main = "12-Point Forecast using ARIMA", fcol = "red")
+print(df3.fc1)
+```
+
+```{r}
+data.frame(Avg = mean(df3.fc1$mean),LB = mean(df3.fc1$lower),UB = mean(df3.fc1$upper))
+```
+
+The forecast for the next 12 points is as shown above. The model predicts an average y value of 56.08, with a 95% confidence interval of [49.65019, 62.5033]. Thus, we are 95% sure that for the next 12 points, the average y value will fall within this interval.
+
+**ARIMA(1, 1, 0)**
+```{r}
+df3.fc2 <- forecast(df3.model2, h=12, level = 95)
+autoplot(df3.fc2, main = "12-Point Forecast using SARIMA", fcol = "red")
+print(df3.fc2)
+```
+
+```{r}
+data.frame(Avg = mean(df3.fc2$mean),LB = mean(df3.fc2$lower),UB = mean(df3.fc2$upper))
+```
+
+The forecast for the next 12 points is as shown above. The model predicts an average y value of 56.14, with a 95% confidence interval of [50.222, 62.067]. Thus, we are 95% sure that for the next 12 points, the average y value will fall within this interval.
+
+### Backtest
+
+Split the dataset, the last 20% will be used for validation.
+```{r}
+set.seed(123)
+n <- length(df3_ts)
+n_train <- floor(0.8 * n)
+n_test <- n - n_train
+df3_train <- window(df3_ts, end = c(n_train))
+df3_test <- window(df3_ts, start = c(n_train+1))
+```
+
+Fit models on training set
+```{r}
+df3.model1.test <- Arima(df3_train, order = c(1, 1, 1))
+df3.model2.test <- Arima(df3_train, order = c(1, 1, 0))
+```
+
+Forecast
+```{r}
+df3.fc1.test <- forecast(df3.model1.test, h= n_test)
+df3.fc2.test <- forecast(df3.model2.test, h= n_test)
+```
+
+Compare forecast accuracy on test set
+
+**ARIMA(1, 1, 1)**
+```{r}
+accuracy(df3.fc1.test, df3_test)[, c("MAPE", "MAE", "RMSE")]
+```
+
+**MAPE = 19.340**: This indicates that, on average, the forecasts deviate from the actual values by 19.34% demonstrating a good level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 10.13**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 10.13 units, providing a straightforward measure of average prediction error in the original units.
+
+**RMSE = 11.81**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the difference between the forecast and actual value is about 11.81 which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+
+**ARIMA(1, 1, 0)**
+```{r}
+accuracy(df3.fc2.test, df3_test)[, c("MAPE", "MAE", "RMSE")]
+```
+
+**MAPE = 18.58**: This indicates that, on average, the forecasts deviate from the actual values by 18.58% demonstrating a good level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 9.73**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 9.73 units, providing a straightforward measure of average prediction error in the original units.
+
+
+**RMSE = 11.39**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the difference between the forecast and actual value is about 11.39, which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+Based on these accuracy measures, the second model, ARIMA(1,1,0) outperforms the other model in forecast accuracy.
+
+
+### Conclusion
+
+The ARIMA(1, 1,0) model is selected as the final model, as it provided better forecast accuracy in backtesting compared to ARIMA(1,1,1). This is contrary to the earlier findings of ARIMA(1,1,1) having better fit with lower AIC value. 
+
+
+The AR(1) coefficient (0.24) indicates that the current value is modestly influenced by the immediate preceding value. Residual diagnostics support the adequacy of the model as its residuals behave like white noise with no significant autocorrelation and approximately constant variance. While the forecast accuracy measures were good, the confidence intervals were relatively wide, leaving much room for uncertainty. Furthermore, with weak the small AR(1) coefficient, predictive power may be limited.
