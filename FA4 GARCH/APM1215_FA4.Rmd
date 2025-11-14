@@ -17,7 +17,6 @@ knitr::opts_chunk$set(echo = TRUE)
 suppressPackageStartupMessages({
   library(readxl)
   library(tidyverse)
-  library(ggplot2)
   library(car)
   library(PerformanceAnalytics)
   library(xts)
@@ -25,6 +24,7 @@ suppressPackageStartupMessages({
   library(quantmod)
   library(tseries)
   library(forecast)
+  library(FinTS)
 })
 ```
 
@@ -87,7 +87,6 @@ acf((stock$returns)^2, main = "ACF of Squared Returns")
 The ACF of squared returns drops quickly to zero and is insignificant at lags 1–2 but becomes significant again at lag 3. This pattern suggests an absence of immediate volatility clustering, but the presence of some delayed or periodic dependence in volatility roughly every three periods. The changing variance of returns over time indicates conditional heteroskedasticity, consistent with the presence of volatility dynamics. This could point to a potential ARCH(3)-type effect, where volatility depends on shocks occurring three periods earlier.
 
 ```{r}
-library(FinTS)
 ArchTest(stock$returns, lags = 12)
 ```
 
@@ -198,86 +197,116 @@ garch11_fc <- ugarchforecast(fitORspec =garch11_fit, n.ahead=10)
 arch3_fc_vol <- sigma(arch3_fc)
 garch11_fc_vol <- sigma(garch11_fc)
 
-fc <- data.frame(cbind(arch3_fc_vol,garch11_fc_vol))
-colnames(fc) <- c("ARCH(3)", "GARCH(1,1")
+fc <- data.frame(arch3_fc_vol,garch11_fc_vol)
+colnames(fc) <- c("ARCH(3)", "GARCH(1,1)")
 fc
 ```
 
 
 ### Forecasted volatility path with confidence intervals
 
+```{r}
+plot_fc <- function(fit, fc) {
+  hist_vol <- tail(sigma(fit), 30)
+  fc_vol <- sigma(fc)
+  fc_mean <- fitted(fc)
+  hist_dates <- index(hist_vol)
+  fc_dates <- seq(from = hist_dates[length(hist_dates)] + 1,
+                  by = "days", length.out = 10)
+
+  upper <- fc_vol * 1.96
+  lower <- fc_vol * -1.96
+
+  all_vol <- c(as.numeric(hist_vol), fc_vol)
+  all_dates <- c(hist_dates, fc_dates)
+
+  plot(all_dates, all_vol, type = "n", col = "blue", lwd = 2,
+       ylim = range(c(lower, upper, fc_vol)),
+       main = "10-Day Forecasted Conditional Volatility",
+       xlab = "Time", ylab = "Volatility")
+
+  polygon(c(fc_dates, rev(fc_dates)),
+          c(upper, rev(lower)),
+          col = "lightblue", border = NA)
+
+  lines(hist_dates, hist_vol, col = "black")
+  lines(fc_dates, fc_vol, col = "blue", lty = 2)
+
+  legend("bottomleft", legend = c("Last 30 Days", "Forecast"),
+         col = c("black", "blue"), lwd = c(1, 1), lty = c(1, 2))
+}
+
+```
+
+```{r}
+plot_fc <- function(fit, fc) {
+  hist_vol <- tail(sigma(fit), 90)
+  hist_dates <- index(hist_vol)
+
+  fc_var <- fc@forecast$sigmaFor^2
+  fc_se  <- fc@forecast$varFor
+
+  if (is.null(fc_se) || all(is.na(fc_se))) {
+    var_upper <- fc_var * 1.2
+    var_lower <- fc_var * 0.8
+  } else {
+    var_upper <- pmax(fc_var + 1.96 * fc_se, 0)
+    var_lower <- pmax(fc_var - 1.96 * fc_se, 0)
+  }
+
+  vol_fc <- sqrt(fc_var)
+  vol_upper <- sqrt(var_upper)
+  vol_lower <- sqrt(var_lower)
+
+  fc_dates <- tail(hist_dates, 1) + 1:length(vol_fc)
+
+  all_dates <- c(hist_dates, fc_dates)
+  all_vol <- c(as.numeric(hist_vol), vol_fc)
+
+  plot(all_dates, all_vol, type = "n",
+       ylim = range(c(vol_lower, vol_upper), na.rm = TRUE),
+       main = "Forecasted Conditional Volatility",
+       xlab = "Time", ylab = "Volatility")
+
+  polygon(c(fc_dates, rev(fc_dates)),
+          c(vol_upper, rev(vol_lower)),
+          col = "lightblue", border = NA)
+
+  lines(hist_dates, hist_vol, col = "black")
+  lines(fc_dates, vol_fc, col = "blue", lty = 2)
+
+  legend("bottomleft", legend = c("Last 90 Days", "Forecast"),
+         col = c("black", "blue"), lwd = c(1,1), lty = c(1,2))
+}
+
+```
+
+
 ARCH(3)
 ```{r}
-# arch
-fc <- arch3_fc
-hist_vol <- tail(sigma(arch3_fit),100)
-fc_vol <- sigma(fc)
-fc_mean <- fitted(fc)
-hist_dates <- index(hist_vol)
-fc_dates <- seq(from=hist_dates[length(hist_dates)]+1, by ="days",
-                length.out =10)
-
-upper <- fc_vol*1.96
-lower <- fc_vol*-1.96
-
-all_vol <- c(as.numeric(hist_vol), fc_vol)
-all_dates <- c(hist_dates, fc_dates)
-
-plot(all_dates, all_vol, type = "n", col = "blue", lwd = 2,
-     ylim = range(c(lower, upper, fc_vol)),
-     main = "10-Day Forecasted Conditional Volatility",
-     xlab = "Time", ylab = "Volatility")
-
-
-polygon(c(fc_dates, rev(fc_dates)),
-        c(upper, rev(lower)),
-        col = "lightblue", border = NA)
-
-lines(hist_dates, hist_vol, col="black")
-
-lines(fc_dates, fc_vol, col="blue", lty=2)
-
-legend("bottomleft", legend = c("Historical Data", "Forecast"), 
-       col = c("black", "blue"), lwd = c(1,1), lty = c(1,2))
-
+plot_fc(arch3_fit, arch3_fc)
 ```
-
-what happens to volatility over the forecast horizon (does it decay, persist, or show asymmetry?)
+GARCH(1,1)
 
 ```{r}
-library(xts)
-hist <- sigma(arch3_fit)
-
-n_hist <- length(hist)
-n_fc   <- length(arch3_sigma)
-
-# Generate date sequences
-hist_dates <- seq(as.Date("2020-01-01"), by = "days", length.out = n_hist)
-fc_dates   <- seq(hist_dates[n_hist] + 1, by = "days", length.out = n_fc)
-
-# Combine volatility vectors and dates
-all_vol <- c(hist, arch3_sigma)
-all_dates <- c(hist_dates, fc_dates)
-
-# Create xts object
-vol_xts <- xts(all_vol, order.by = all_dates)
-
+plot_fc(garch11_fit, garch11_fc)
 ```
 
+The plot shows the conditional volatility over the last three months (90 days) alongside the 10-day forecasted volatility from both the ARCH(3) and GARCH(1,1) models. As expected, the forecasted volatility path generated by ARCH(3) show the model's sensitivity to past shocks, resulting in quick fluctuations. In contrast, GARCH(1,1) model's forecast exhibits a smoother decay, reflecting the model’s ability to capture volatility persistence. Both forecasts gradually decay over the 10-day horizon, reflecting the natural tendency of conditional volatility to revert toward its long-term average after recent shocks
+
+The wide forecast intervals for both models, spanning roughly same width as the range of the historical data, leave much room for uncertainty in future volatility estimates.
 
 
 Reflection and Application
 
-Discuss in which contexts (finance, energy, currency) volatility modeling is most relevant.
-
-Identify any limitations or possible model improvements.
-
-
+Volatility modeling is highly relevant in finance, where stock returns exhibit time-varying uncertainty that affects pricing, risk management, and portfolio optimization. Historical stock returns can be analyzed to capture patterns like volatility clustering (periods of high or low volatility) by relating current volatility to past returns and past volatility. ARCH models can capture short bursts of volatility but may struggle in showing the persisting effects of events. GARCH improves on this by being able to capture both short and long-run volatility persistence. Both models, however, may be less effective when returns exhibit asymmetry, which was also present in the recorded data. For further improvement on this, EGARCH models may be explored for its ability to capture asymmetric responses to shocks.
 
 # Bitcoin Returns
 
 ```{r}
 bitcoin <- read_csv('dataset_bitcoin_returns.csv', show_col_types = FALSE)
+bitcoin$dates <- seq.Date(from = as.Date("2010-01-01"), by="days", length.out = nrow(bitcoin))
+
 head(bitcoin)
 ```
 
@@ -285,9 +314,10 @@ head(bitcoin)
 
 ### Return Series and Rolling Standard Deviation
 ```{r,fig.width=7, fig.height=4}
-plot(1:nrow(bitcoin), bitcoin$returns, type = "l", col = "blue",
+plot(bitcoin$dates, bitcoin$returns, type = "l", col = "blue",
      main = "Bitcoin Returns Series", xlab = "Time", ylab = "Return")
 ```
+
 
 ```{r, fig.width=6, fig.height=4}
 hist(bitcoin$returns, main="Distribution of Bitcoin Returns", 
@@ -304,40 +334,37 @@ lines(x,dnorm(x,mean = mean(bitcoin$returns, na.rm = TRUE),
 
 ```{r, fig.width=7, fig.height=7}
 par(mfrow=c(2,1))
-plot(1:nrow(bitcoin), rolling_sd, type = "l", col = "red", 
+plot(bitcoin$dates, rolling_sd, type = "l", col = "red", 
      main = "Rolling Standard Deviation (n=20)", xlab = "Time", ylab = "Volatility")
 rolling_sd <- runSD(bitcoin$returns, n = 20, cumulative = FALSE)
-plot(1:nrow(bitcoin), bitcoin$returns, type = "l", col = "blue",
+plot(bitcoin$dates, bitcoin$returns, type = "l", col = "blue",
      main = "Returns and Rolling Standard Deviation (n=20)",
      xlab = "Time", ylab = "Value")
-lines(1:nrow(bitcoin), rolling_sd, col = "red", lwd = 2)
+lines(bitcoin$dates, rolling_sd, col = "red", lwd = 2)
 ```
 
 ```{r, fig.width=6, fig.height=4}
-acf(bitcoin^2, main = "ACF of Squared Returns")
+acf((bitcoin$returns)^2, main = "ACF of Squared Returns")
 ```
 
 Slow decay, pattern
 
-
+```{r}
+ArchTest(bitcoin$returns, lags = 12)
+```
 
 
 ## Model Estimation
 
 ### Model 1 GARCH(1,1)
 ```{r}
-garch11_spec <-  ugarchspec(
-  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
-  mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
-  distribution.model = "norm"
-)
-
 garch11_fit <- ugarchfit(garch11_spec, data = bitcoin$returns)
 ```
 
 ```{r}
 garch11_fit@fit$matcoef
 ```
+
 ```{r}
 infocriteria(garch11_fit)
 ```
