@@ -1,0 +1,637 @@
+---
+title: "Formative Assessment 2: Exponential Smoothing"
+author: "Baybayon, Darlyn Antoinette B."
+output: pdf_document
+header-includes:
+  - \usepackage{titling}
+  - \setlength{\droptitle}{-2cm}   % move title up
+geometry: top=2cm, bottom=2cm, left=2cm, right=2cm
+mainfont: "Georgia"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(readxl)
+  library(tidyverse)
+  library(ggplot2)
+  library(car)
+  library(forecast)
+})
+```
+
+
+## Airline Passengers
+
+```{r}
+airline <- read_excel("~/FEU/5TH YR 1ST SEM/APM1215/FA2 Exponential Smoothing/data/Airline Passengers.xlsx")
+head(airline)
+```
+
+
+### Time Series Plot
+
+```{r}
+airline$Month <- as.Date(paste0(airline$Month, "-01"))
+airline_ts <- ts(airline$Passengers, start = c(2015, 1), frequency = 12)
+
+plot(airline_ts, ylab = "Passengers", main = "Airline Passengers Over Time")
+abline(h = mean(airline_ts), col = "red", lwd = 2, lty = 2)
+acf(airline_ts,  main = "ACF of Airline Passengers")
+decomp <- decompose(airline_ts, type = "multiplicative")
+plot(decomp)
+```
+
+
+**Level**: The time series has an upwards shift in level from 2015 through 2019, roughly between 1,500 and 2,000.
+
+**Trend**: There is a clear an upwards trend in the plot, as the number of airline passengers show a general increase from 2015 to the end of 2019.
+
+**Seasonality**: The series exhibits strong annual multiplicative seasonality, with peaks occurring every midyear. The magnitude of seasonal fluctuations increases alongside the trend, suggesting that seasonality grows with the level of the series.
+
+**Randomness**: No discernible pattern is observed in the residuals.
+
+
+### Smoothing
+
+Since a strong trend and multiplicative seasonality was found in the series, a multiplicative Holt-Winters smoothing method which uses three smoothing parameters (for level, trend, and seasonality) will be used. 
+
+```{r}
+fit_airline_hw <- hw(airline_ts, seasonal = "multiplicative", level = 95)
+```
+
+ETS() Model
+
+```{r}
+fit_airline <- ets(airline_ts)
+fit_airline$method
+```
+
+For comparison, the ets() function, which automatically selects the best exponential smoothing model based on the characteristics of the time series, will be used. Since an upward trend and multiplicative seasonality were observed in the series, ETS(M, Ad, M) was selected. This model captures multiplicative errors, which allow variance to increase with the level, an additive damped trend, which models upward movement that slows over time, and multiplicative seasonality, which reflects seasonal patterns that grow in proportion to the level of the series.
+
+
+
+```{r}
+plot(airline_ts, main = "Original Series with ETS() and HW() Fitted Values",
+     ylab = "Passengers", xlab = "Time", col = "gray", lwd = 2)
+
+lines(fitted(fit_airline), col = "blue", lwd = 2, lty=2)
+lines(fitted(fit_airline_hw), col ="red", lwd= 2, lty =3)
+legend("topleft", legend = c("Original", "ETS", "HW"),
+       col = c("gray", "blue", "red"), lwd = 2)
+```
+
+### Smoothing Coefficients
+
+Holt-Winters coefficients
+```{r}
+coef(fit_airline_hw$model)
+```
+$\alpha = 0.065$: This low alpha value indicates that the level is very stable and is not prone to changes. The model will forecast a relatively flat, consistent baseline
+
+$\beta = 1e-04$: The model has a very stable trend component, with little to no reaction to recent fluctuations. This assumes the upward trend in airline passengers is linear and constant.
+
+$\gamma = 0.617$: The model is moderately sensitive to changes in seasonality, and is able to adapt to gradual shifts in fluctuations.
+
+ETS Coefficients
+
+```{r}
+coef(fit_airline)
+```
+$\alpha = 0.5597$: Moderately responsive to changes in level, allowing the model to adapt to shifts in the baseline of the series.
+
+$\beta = 0.0156$: The model has a stable trend, with minimal adjustment based on recent data. This indicates that the model assumes a long-term upward slope.
+
+$\gamma = 2e-04$: The model has a highly stable seasonality component, assuming that seasonality repeats consistently with little variation. 
+
+$\phi = 0.9798$: This value close to 1 suggests that the trend is only slightly damped, meaning the upward trend continues into the future but flattens gradually,not continuing to increase or decrease indefinitely.
+
+#### Model Fit and Accuracy
+
+Holt-Winters Accuracy Measures
+
+```{r}
+accuracy(fit_airline_hw)
+```
+
+**MAPE = 0.819**: This indicates that, on average, the forecasts deviate from the actual values by 0.819% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 14.978**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 14.978 units, providing a straightforward measure of average prediction error in the original units.
+
+**MSD = RMSE**$^2$**=385.464**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 385 (or RMSE = 19.6), indicating the presence of some relatively larger errors in the forecast.
+
+ETS Accuracy Measures
+
+```{r}
+accuracy(fit_airline)
+```
+
+**MAPE = 0.775**: This indicates that, on average, the forecasts deviate from the actual values by 0.775% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 13.583**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 13.6 units, providing a straightforward measure of average prediction error in the original units.
+
+**MSD = RMSE**$^2$**=279.069**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 279 (or RMSE = 16.7), indicating the presence of some relatively larger errors in the forecast.
+
+
+Based on these accuracy measures, the ETS model outperforms the Holt-Winters smoothed model, with higher accuracy and relatively smaller residuals.
+
+
+### Residual Analysis
+
+Holt-Winters Residuals
+```{r}
+checkresiduals(fit_airline_hw)
+```
+
+Residuals: No strong discernible pattern in the residuals.
+
+Ljung-Box Test: p < 0.05, hence the residuals are not independent and not identically distributed.
+
+ACF: Some autocorrelation is present, confirming the Ljung-Box Test result.
+
+Normality: Relatively normal distribution of residuals.
+
+The presence of autocorrelation in the Holt-Winters model suggests that it is not able to capture all underlying patterns in the data. 
+
+ETS Residuals
+```{r}
+checkresiduals(fit_airline)
+```
+
+Residuals: No consistent pattern in the residuals
+
+Ljung-Box Test: p > 0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation in the residuals, supporting the Ljung-Box Test result.
+
+Normality: The residuals are normally distributed.
+
+
+### Forecast 
+
+```{r}
+fc <- forecast(fit_airline, h = 4, level =95)
+autoplot(fc, main = "Forecast for Next 4 Months", ylab = "Passengers", xlab = "Time", fcol = "red")
+print(fc)
+
+```
+
+
+```{r}
+mean(fc$mean)
+print(mean(fc$lower))
+print(mean(fc$upper))
+```
+
+The forecast for the next four months is as shown above. The model predicts an average of 1,698 passengers in the airline, with a 95% confidence interval of [1,652.37, 1,744.502]. Thus, we are 95% sure that in the next four months, the airline will have an average number of passengers in this interval.
+
+### Conclusion
+The number of passengers displayed a strong upward trend and multiplicative seasonality. Both Holt-Winters and ETS models were suitable, but ETS(M,Ad,M) produced better accuracy measures with lower residual errors and independent residuals.
+
+## Product Demand
+
+```{r}
+product <- read_excel("~/FEU/5TH YR 1ST SEM/APM1215/FA2 Exponential Smoothing/data/Product Demand.xlsx")
+head(product)
+```
+
+### Time Series Plot
+
+```{r}
+product_ts <- ts(product$Demand, frequency = 4)
+plot(product_ts, ylab = "Demand", main = "Product Demand Over Time")
+abline(h = mean(product_ts), col = "red", lwd = 2, lty = 2)
+acf(product_ts,  main = "ACF of Product Demand")
+
+decomp <- decompose(product_ts, type = "multiplicative")
+plot(decomp)
+```
+
+**Level**: The level is stable, at around 251, and does not appear to shift over time.
+
+**Trend**: No strong trend is present in the data. Product demand fluctuates between 240 and 260 through 20 weeks.
+
+**Seasonality**: No consistent seasonality is observed, demand peaks at 4th, 12th, and 16th weeks, so at the 4th week (or end of the month) but not in 8th and 20th weeks.
+
+**Randomness**: The residuals exhibit no strong patterns.
+
+
+### Smoothing
+
+```{r}
+fit_product_ses <- ses(product_ts, initial = "simple", level = 95)
+```
+
+Since no there were no strong trends or seasonality in the series, a Simple Exponential Smoothing method, which uses one smoothing parameter (for level) will be used.
+
+```{r}
+fit_product <- ets(product_ts)
+fit_product$method
+```
+
+Since no trend or seasonality observed in the series, the ets() function has selected ETS(M,N,N) which captures multiplicative errors, which allow variance to increase with the level, no trend, and no seasonality.
+
+
+```{r}
+plot(product_ts, main = "Original Series with ETS() and SES() Fitted Values",
+     ylab = "Demand", xlab = "Time", col = "gray", lwd = 2)
+
+lines(fitted(fit_product), col = "blue", lwd = 2, lty=2)
+lines(fitted(fit_product_ses), col ="red", lwd= 2, lty =3)
+legend("topleft", legend = c("Original", "ETS", "SES"),
+       col = c("gray", "blue", "red"), lwd = 2)
+```
+
+### Smoothing Coefficients
+
+SES Coefficients
+```{r}
+coef(fit_product_ses$model)
+```
+$\alpha = 0.297$: This indicates that the model has a somewhat stable level, relying more on past data.
+
+ETS Coefficients
+```{r}
+coef(fit_product)
+```
+
+$\alpha = 1e-04$: This low value indicates that the model has a very stable level and is not reactive to recent fluctuations in the series.
+
+### Model Fit and Accuracy
+
+SES Accuracy Measures
+
+```{r}
+accuracy(fit_product_ses)
+```
+
+**MAPE = 2.352**: This indicates that, on average, the forecasts deviate from the actual values by 2.352% demonstrating a good level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 5.925**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 5.925 units, providing a straightforward measure of average prediction error in the original units.
+
+**MSD = RMSE**$^2$ **= 55. 573**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 55.57 (or RMSE = 7.45), indicating the presence of some relatively larger errors in the forecast.
+
+
+ETS Accuracy Measures
+```{r}
+accuracy(fit_product)
+```
+
+**MAPE = 2.085**: This indicates that, on average, the forecasts deviate from the actual values by 2.085% demonstrating a good level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 5.225**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 5.225 units, providing a straightforward measure of average prediction error in the original units.
+
+**MSD = RMSE**$^2$ **= 39.791**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 39.791 (or RMSE = 6.308), indicating the presence of some relatively larger errors in the forecast.
+
+Based on the accuracy measures, the ETS model outperforms the SES model,  with higher accuracy and relatively smaller residuals.
+
+### Residual Analysis
+
+SES Residuals
+```{r}
+checkresiduals(fit_product_ses)
+```
+
+Residuals: No strong patterns in the residuals.
+
+Ljung-Box Test: p > 0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation supporting the Ljung-Box test result.
+
+Normality: Relatively normal distribution of residuals.
+
+ETS Residuals
+```{r}
+checkresiduals(fit_product)
+```
+
+Residuals: No strong patterns in the residuals.
+
+Ljung-Box Test: p > 0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation.
+
+Normality: Slightly positively-skewed to normal distribution of residuals.
+
+
+### Forecast 
+
+```{r}
+fc <- forecast(fit_product, h = 4, level =95)
+autoplot(fc, main = "Forecast for Next 4 Periods", ylab = "Demand", xlab = "Time", fcol = "red")
+print(fc)
+
+```
+
+```{r}
+mean(fc$mean)
+print(mean(fc$lower))
+print(mean(fc$upper))
+```
+
+
+The forecast for the next four months is as shown above. The model predicts an average demand 250.75, with a 95% confidence interval of [237.7179, 263.7826]. Thus, we are 95% sure that in the next four months, the average demand for the product will fall within this interval. Notably, the confidence intervals are relatively wide, leaving much room for uncertainty.
+
+## Ice Cream Sales
+
+```{r}
+icecream <- read_excel("~/FEU/5TH YR 1ST SEM/APM1215/FA2 Exponential Smoothing/data/Ice Cream Sales.xlsx")
+head(icecream)
+```
+
+
+### Time Series Plot
+
+```{r}
+icecream$Month <- as.Date(paste0(icecream$Month, "-01"))
+icecream_ts <- ts(icecream$Sales, start = c(2015, 1), end= c(2019,12), frequency = 12)
+
+plot(icecream_ts, ylab = "Sales", main = "Ice Cream Sales Over Time")
+abline(h = mean(icecream_ts), col = "red", lwd = 2, lty = 2)
+acf(icecream_ts,  main = "ACF of Ice Cream Sales")
+decomp <- decompose(icecream_ts, type = "additive")
+plot(decomp)
+```
+
+**Level**: The time series has an upwards shift in level from 2015 through 2019, roughly between 160 and 180.
+
+**Trend**: There is a clear an upwards trend in the plot, as the ice cream sales show a general increase from 2015 to the end of 2019.
+
+**Seasonality**: The series exhibits strong annual additive seasonality, with peaks occurring every midyear on July. The magnitude of seasonal fluctuations is constant alongside the trend, suggesting that seasonality is additive and does not scale with the level of the series.
+
+**Randomness**: No discernible pattern is observed in the residuals.
+
+### Smoothing
+
+Since an upward trend and additive seasonality was observed in the series, the additive Holt-Winters smoothing method which uses three smoothing parameters (for level, trend, and seasonality) will be used. 
+
+
+```{r}
+fit_icecream_hw <- hw(icecream_ts, seasonal="additive", level=95)
+```
+
+
+```{r}
+fit_icecream <- ets(icecream_ts)
+fit_icecream$method
+```
+
+The ets() function automatically selects the best exponential smoothing model based on the characteristics of the time series. Since an upward trend and multiplicative seasonality were observed in the series, the ETS(A, A, A) was selected. This model captures additive errors, where variance is constant and does not scale with level, an additive trend, which models upward movement, and additive seasonality, which reflects consistent seasonal patterns but does not grow with level.
+
+```{r}
+plot(icecream_ts, main = "Original Series with ETS() and HW() Fitted Values",
+     ylab = "Sales", xlab = "Time", col = "gray", lwd = 2)
+
+lines(fitted(fit_icecream), col = "blue", lwd = 2, lty=2)
+lines(fitted(fit_icecream_hw), col ="red", lwd= 2, lty =3)
+legend("topleft", legend = c("Original", "ETS", "HW"),
+       col = c("gray", "blue", "red"), lwd = 2)
+```
+
+### Smoothing Coefficients
+
+```{r}
+coef(fit_icecream_hw$model)
+```
+$\alpha = 0.9997$: The level shifts and reacts strongly to recent changes in the series.
+
+$\beta = 0.0102$: The trend is stable, reacts less on recent data and relies more on historical trend.
+
+$\gamma = 1e-04$: The seasonality is very stable, and the model assumes that seasonality repeats consistently with little variation.
+
+
+```{r}
+coef(fit_icecream)
+```
+
+$\alpha = 0.9966$: The level reacts strongly to recent changes in the series.
+
+$\beta = 0.0102$: The trend is stable, reacts less on recent data.
+
+$\gamma = 1e-04$: The model has very stable seasonality, assuming that the patterns in seasonality repeats consistently with little variation.
+
+
+### Model Fit and Accuracy
+
+Holt-Winters Accuracy Measures
+
+```{r}
+accuracy(fit_icecream_hw)
+```
+
+**MAPE = 0.232**: This indicates that, on average, the forecasts deviate from the actual values by 0.232% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 0.329**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 0.329 units, providing a straightforward measure of average prediction error in the original units.
+
+**MSD = RMSE**$^2$ **= 0.311**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 0.311 (or RMSE = 0.557), which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+
+ETS Accuracy Measures
+```{r}
+accuracy(fit_icecream)
+```
+**MAPE = 0.232**: This indicates that, on average, the forecasts deviate from the actual values by 0.232% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 0.329**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 0.329 units, providing a straightforward measure of average prediction error in the original units.
+
+**MSD = RMSE**$^2$ **= 0.311**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 0.311 (or RMSE = 0.557), which is only relatively higher than MAD, suggesting that the larger residuals are not far off from others.
+
+Both ETS and HW models have good fit and performed well according to accuracy measures.
+
+### Residual Analysis
+
+Holt-Winters Residuals
+```{r}
+checkresiduals(fit_icecream_hw)
+```
+
+Residuals: Some pattern, but not consistent.
+
+Ljung-Box Test: p >0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation.
+
+Normality: Residuals are normally distributed.
+
+
+ETS Residuals
+```{r}
+checkresiduals(fit_icecream)
+```
+Residuals: Some pattern, but not consistent.
+
+Ljung-Box Test: p >0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation.
+
+Normality: Residuals are normally distributed.
+
+
+Results are almost identical for both the hw() and ets() functions. 
+
+### Forecast 
+
+```{r}
+fc <- forecast(fit_icecream, h = 4, level =95)
+autoplot(fc, main = "Forecast for Next 4 Months", ylab = "Sales", xlab = "Time", fcol = "red")
+print(fc)
+
+```
+
+```{r}
+mean(fc$mean)
+print(mean(fc$lower))
+print(mean(fc$upper))
+```
+
+The forecast for the next four months is as shown above. The model predicts an average sale of 154.09, with a 95% confidence interval of [152.11, 156.07]. Thus, we are 95% sure that in the next four months, the average ice cream sales will fall within this interval.
+
+## CPI
+
+```{r}
+cpi <- read_excel("~/FEU/5TH YR 1ST SEM/APM1215/FA2 Exponential Smoothing/data/CPI.xlsx")
+head(cpi)
+```
+
+
+### Time Series Plot
+
+```{r}
+cpi_ts <- ts(cpi$CPI, start = c(2010, 1), frequency = 4)
+plot(cpi_ts, ylab = "CPI", main = "CPI Over Time")
+abline(h = mean(cpi_ts), col = "red", lwd = 2, lty = 2)
+acf(cpi_ts, main = "ACF of CPI")
+decomp <- decompose(cpi_ts, type = "multiplicative")
+plot(decomp)
+```
+
+**Level**: Increasing level from 100 to 125, starting 2010 through 2019.
+
+**Trend**: There is a strong upwards trend, representing the constant increase of CPI from 2010 to 2019.
+
+**Seasonality**: There is no strong seasonality between the years.
+
+**Randomness**: Some pattern in randomness in the beginning.
+
+
+### Smoothing
+
+Since an upwards trend was present but no seasonality, the Holt smoothing method, which uses two smoothing parameters (for level and trend), will be used.
+```{r}
+fit_cpi_h <- holt(cpi_ts, level = 95)
+```
+
+
+```{r}
+fit_cpi <- ets(cpi_ts)
+fit_cpi$method
+```
+Given the characteristics of the series, ets() selected the ETS(A,A,N) method. This model captures additive errors,  where variance is constant and does not scale with level, an additive trend, which models upward movement, and no seasonality. 
+
+```{r}
+plot(cpi_ts, main = "Original Series with ETS() and Holt() Fitted Values",
+     ylab = "Passengers", xlab = "Time", col = "gray", lwd = 2)
+
+lines(fitted(fit_cpi), col = "blue", lwd = 2, lty=2)
+lines(fitted(fit_cpi_h), col ="red", lwd= 2, lty =3)
+legend("topleft", legend = c("Original", "ETS", "Holt"),
+       col = c("gray", "blue", "red"), lwd = 2)
+```
+
+### Smoothing Coefficients
+
+Holt Coefficients
+```{r}
+coef(fit_cpi_h$model)
+```
+$\alpha = 0.343$: The model has slightly stable level, resulting in a smoother forecast.
+
+$\beta = 0.343$: The trend is somewhat stable, relying more on past historical data.
+
+ETS Coefficients
+```{r}
+coef(fit_cpi)
+```
+
+$\alpha = 0.343$: The model has slightly stable level, resulting in a smoother forecast.
+
+$\beta = 0.343$: The trend is somewhat stable, relying more on past historical data.
+
+
+### Model Fit and Accuracy
+
+Holt Accuracy Measures
+```{r}
+accuracy(fit_cpi_h)
+```
+**MAPE = 0.054**: This indicates that, on average, the forecasts deviate from the actual values by 0.054% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 0.061**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 0.061 units, providing a straightforward measure of average prediction error in the original units.
+
+
+**MSD = RMSE**$^2$ **= 0.006**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 0.006 (or RMSE = 0.074), which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+
+ETS Accuracy Measures
+```{r}
+accuracy(fit_cpi)
+```
+
+**MAPE = 0.054**: This indicates that, on average, the forecasts deviate from the actual values by 0.054% demonstrating a very high level of accuracy relative to the scale of the data.
+
+**MAE/MAD = 0.061**: The MAD suggests that, on average, the forecasts differ from the observed values by approximately 0.061 units, providing a straightforward measure of average prediction error in the original units.
+
+
+**MSD = RMSE**$^2$ **= 0.006**: The MSD also quantifies the difference of forecast from actual values but greatly penalizes larger errors. On average, the squared difference between the forecast and actual value is about 0.006 (or RMSE = 0.074), which is only slightly higher than MAD, suggesting that the larger residuals are not far off from others.
+
+According to the accuracy measures, the Holt and ETS models perform similarly and effectively, with good accuracy relative to the scale of data and small residuals.
+
+### Residual Analysis
+
+Holt Residuals
+```{r}
+checkresiduals(fit_cpi_h)
+```
+
+Residuals: No consistent pattern in the residuals.
+
+Ljung-Box Test: p >0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation.
+
+Normality: Residuals are normally distributed.
+
+
+ETS Residuals
+```{r}
+checkresiduals(fit_cpi)
+```
+
+Residuals: No consistent pattern in the residuals.
+
+Ljung-Box Test: p >0.05, hence the residuals are independent and identically distributed.
+
+ACF: No significant autocorrelation.
+
+Normality: Residuals are normally distributed.
+
+Results from the holt() and ets() functions are identical.
+
+### Forecast 
+
+```{r}
+fc <- forecast(fit_cpi, h = 4, level =95)
+autoplot(fc, main = "Forecast for Next 4 Periods", ylab = "CPI", xlab = "Time", fcol = "red")
+print(fc)
+```
+
+```{r}
+mean(fc$mean)
+print(mean(fc$lower))
+print(mean(fc$upper))
+```
+
+The forecast for the next four periods is as shown above. The model predicts an average CPI of 129.81, with a 95% confidence interval of [129.5855, 130.0397]. Thus, we are 95% sure that in the next four months, the average CPI will fall within this interval.
